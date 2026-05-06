@@ -3,6 +3,7 @@
 #include <gio/gio.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define BUS_NAME "org.gnome.Shell.Extensions.GMenu"
 #define OBJECT_PATH "/org/gnome/Shell/Extensions/GMenu"
@@ -68,8 +69,31 @@ static GPtrArray *read_stdin_lines(void) {
   return items;
 }
 
+static void usage(FILE *out, const char *prog) {
+  fprintf(out, "usage: %s [-p prompt]\n", prog);
+}
+
 int main(int argc, char **argv) {
-  const char *prompt = (argc > 1) ? argv[1] : ">";
+  const char *prompt = ">";
+
+  int opt;
+  while ((opt = getopt(argc, argv, "p:h")) != -1) {
+    switch (opt) {
+    case 'p':
+      prompt = optarg;
+      break;
+    case 'h':
+      usage(stdout, argv[0]);
+      return EXIT_SUCCESS;
+    default:
+      usage(stderr, argv[0]);
+      return EXIT_FAILURE;
+    }
+  }
+  if (optind != argc) {
+    usage(stderr, argv[0]);
+    return EXIT_FAILURE;
+  }
 
   GPtrArray *items = read_stdin_lines();
 
