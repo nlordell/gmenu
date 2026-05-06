@@ -1,3 +1,6 @@
+CFLAGS += -Wall -Wextra $(shell pkg-config --cflags gio-2.0)
+LDLIBS += $(shell pkg-config --libs gio-2.0)
+
 .PHONY: all
 all: gmenu ;
 
@@ -7,4 +10,8 @@ install: gmenu
 	@ false
 
 gmenu: gmenu.c
-	gcc -o $@ $^
+	gcc $(CFLAGS) -o $@ $^ $(LDLIBS)
+
+compile_commands.json: gmenu.c
+	@ printf '[{"directory":"%s","file":"gmenu.c","command":"gcc %s -c gmenu.c"}]\n' \
+		"$(CURDIR)" "$(CFLAGS)" > $@
