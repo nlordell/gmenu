@@ -11,6 +11,7 @@
 
 typedef struct {
   GMainLoop *loop;
+  GDBusConnection *bus;
   int exit_code;
 } State;
 
@@ -54,19 +55,39 @@ static void on_cancelled(GDBusConnection *connection, const gchar *sender_name,
   g_main_loop_quit(state->loop);
 }
 
-static GPtrArray *read_stdin_lines(void) {
-  GPtrArray *items = g_ptr_array_new_with_free_func(g_free);
-  char *line = NULL;
-  size_t cap = 0;
-  ssize_t len;
-  while ((len = getline(&line, &cap, stdin)) != -1) {
+static gboolean on_stdin_ready(GIOChannel *channel, GIOCondition cond,
+                               gpointer user_data) {
+  (void)cond;
+  State *state = user_data;
+
+  gchar *line = NULL;
+  gsize len = 0;
+  GError *error = NULL;
+  GIOStatus status =
+      g_io_channel_read_line(channel, &line, &len, NULL, &error);
+
+  switch (status) {
+  case G_IO_STATUS_NORMAL:
     while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
       line[--len] = '\0';
     }
-    g_ptr_array_add(items, g_strdup(line));
+    g_dbus_connection_call(state->bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME,
+                           "ListItem", g_variant_new("(s)", line), NULL,
+                           G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL, NULL);
+    g_free(line);
+    return G_SOURCE_CONTINUE;
+  case G_IO_STATUS_AGAIN:
+    g_free(line);
+    return G_SOURCE_CONTINUE;
+  case G_IO_STATUS_EOF:
+  case G_IO_STATUS_ERROR:
+  default:
+    if (error) {
+      g_error_free(error);
+    }
+    g_free(line);
+    return G_SOURCE_REMOVE;
   }
-  free(line);
-  return items;
 }
 
 static void usage(FILE *out, const char *prog) {
@@ -95,19 +116,17 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  GPtrArray *items = read_stdin_lines();
-
   GError *error = NULL;
   GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
   if (!bus) {
     g_printerr("failed to connect to session bus: %s\n", error->message);
     g_error_free(error);
-    g_ptr_array_free(items, TRUE);
     return EXIT_FAILURE;
   }
 
   State state = {
       .loop = g_main_loop_new(NULL, FALSE),
+      .bus = bus,
       .exit_code = EXIT_FAILURE,
   };
 
@@ -118,22 +137,20 @@ int main(int argc, char **argv) {
       bus, NULL, INTERFACE_NAME, "Cancelled", OBJECT_PATH, NULL,
       G_DBUS_SIGNAL_FLAGS_NONE, on_cancelled, &state, NULL);
 
-  GVariantBuilder builder;
-  g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-  for (guint i = 0; i < items->len; i++) {
-    g_variant_builder_add(&builder, "s", (const char *)items->pdata[i]);
-  }
-
   GVariant *result = g_dbus_connection_call_sync(
-      bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "Show",
-      g_variant_new("(ass)", &builder, prompt), NULL, G_DBUS_CALL_FLAGS_NONE,
-      -1, NULL, &error);
+      bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "SetPrompt",
+      g_variant_new("(s)", prompt), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
+      &error);
   if (!result) {
-    g_printerr("Show failed: %s\n", error->message);
+    g_printerr("SetPrompt failed: %s\n", error->message);
     g_error_free(error);
     goto cleanup;
   }
   g_variant_unref(result);
+
+  GIOChannel *stdin_channel = g_io_channel_unix_new(STDIN_FILENO);
+  g_io_add_watch(stdin_channel, G_IO_IN | G_IO_HUP, on_stdin_ready, &state);
+  g_io_channel_unref(stdin_channel);
 
   g_main_loop_run(state.loop);
 
@@ -142,7 +159,6 @@ cleanup:
   g_dbus_connection_signal_unsubscribe(bus, sub_cancelled);
   g_main_loop_unref(state.loop);
   g_object_unref(bus);
-  g_ptr_array_free(items, TRUE);
 
   return state.exit_code;
 }
