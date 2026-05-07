@@ -119,6 +119,7 @@ static void usage(FILE *out, const char *prog) {
           "usage: %s [options]\n"
           "options:\n"
           "  -p, --prompt PROMPT  set the menu prompt\n"
+          "      --no-custom      disallow values not in the list\n"
           "      --kb CODE:KEY    bind a custom keyboard shortcut\n"
           "  -h, --help           show this help message\n",
           prog);
@@ -126,11 +127,13 @@ static void usage(FILE *out, const char *prog) {
 
 int main(int argc, char **argv) {
   const char *prompt = ">";
+  gboolean allow_custom = TRUE;
   Keybinding keybindings[MAX_KEYBINDINGS];
   size_t n_keybindings = 0;
 
   static const struct option long_opts[] = {
       {"prompt", required_argument, NULL, 'p'},
+      {"no-custom", no_argument, NULL, 'n'},
       {"kb", required_argument, NULL, 'k'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
@@ -141,6 +144,9 @@ int main(int argc, char **argv) {
     switch (opt) {
     case 'p':
       prompt = optarg;
+      break;
+    case 'n':
+      allow_custom = FALSE;
       break;
     case 'k':
       if (n_keybindings >= MAX_KEYBINDINGS) {
@@ -167,6 +173,7 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
+  GVariant *result = NULL;
   GError *error = NULL;
   GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
   if (!bus) {
@@ -188,12 +195,22 @@ int main(int argc, char **argv) {
       bus, NULL, INTERFACE_NAME, "Cancelled", OBJECT_PATH, NULL,
       G_DBUS_SIGNAL_FLAGS_NONE, on_cancelled, &state, NULL);
 
-  GVariant *result = g_dbus_connection_call_sync(
+  result = g_dbus_connection_call_sync(
       bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "SetPrompt",
       g_variant_new("(s)", prompt), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
       &error);
   if (!result) {
     g_printerr("SetPrompt failed: %s\n", error->message);
+    goto cleanup;
+  }
+  g_variant_unref(result);
+
+  result = g_dbus_connection_call_sync(
+      bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "AllowCustom",
+      g_variant_new("(b)", allow_custom), NULL, G_DBUS_CALL_FLAGS_NONE, -1,
+      NULL, &error);
+  if (!result) {
+    g_printerr("AllowCustom failed: %s\n", error->message);
     goto cleanup;
   }
   g_variant_unref(result);
