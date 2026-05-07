@@ -1,0 +1,11 @@
+{
+  "name": "gmenu",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "devDependencies": {
+    "@girs/gnome-shell": "^50.0.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3"
+  }
+}
