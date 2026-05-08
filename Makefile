@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (c) 2026 Nicholas Rodrigues Lordello
+
 CFLAGS += -Wall -Wextra $(shell pkg-config --cflags gio-2.0)
 LDLIBS += $(shell pkg-config --libs gio-2.0)
 

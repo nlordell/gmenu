@@ -1,4 +1,4 @@
+.cache/clangd/
 compile_commands.json
 gmenu
 node_modules/
-*.idx
