@@ -197,20 +197,10 @@ int main(int argc, char **argv) {
 
   result = g_dbus_connection_call_sync(
       bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "SetPrompt",
-      g_variant_new("(s)", prompt), NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL,
-      &error);
+      g_variant_new("(sb)", prompt, allow_custom), NULL, G_DBUS_CALL_FLAGS_NONE,
+      -1, NULL, &error);
   if (!result) {
     g_printerr("SetPrompt failed: %s\n", error->message);
-    goto cleanup;
-  }
-  g_variant_unref(result);
-
-  result = g_dbus_connection_call_sync(
-      bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "AllowCustom",
-      g_variant_new("(b)", allow_custom), NULL, G_DBUS_CALL_FLAGS_NONE, -1,
-      NULL, &error);
-  if (!result) {
-    g_printerr("AllowCustom failed: %s\n", error->message);
     goto cleanup;
   }
   g_variant_unref(result);
