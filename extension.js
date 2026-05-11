@@ -3,8 +3,11 @@
 
 import Gio from "gi://Gio";
 import GLib from "gi://GLib";
+import St from "gi://St";
+import Clutter from "gi://Clutter";
 
 import { Extension } from "resource:///org/gnome/shell/extensions/extension.js";
+import * as Main from "resource:///org/gnome/shell/ui/main.js";
 
 const BUS_NAME = "org.gnome.Shell.Extensions.GMenu";
 const OBJECT_PATH = "/org/gnome/Shell/Extensions/GMenu";
@@ -41,6 +44,151 @@ const DBUS_INTERFACE = `
  * @property {string[]} items
  * @property {Map<number, string>} keyBindings
  */
+
+class GMenuUI {
+  /** @type {St.BoxLayout | null} */
+  _root = null;
+
+  /** @type {St.Label | null} */
+  _promptLabel = null;
+
+  /** @type {St.Entry | null} */
+  _entry = null;
+
+  /** @type {St.BoxLayout | null} */
+  _rows = null;
+
+  /** @type {Clutter.Grab | null} */
+  _grab = null;
+
+  /**
+   * @param {string} prompt
+   */
+  show(prompt) {
+    this._ensureActors();
+    this.clearItems();
+
+    this._promptLabel?.set_text(prompt);
+    this._entry?.set_text("");
+    this._positionRoot();
+    this._attachRoot();
+    this._focusEntry();
+  }
+
+  /**
+   * @param {string} item
+   */
+  appendItem(item) {
+    this._ensureActors();
+    this._rows?.add_child(
+      new St.Label({
+        style_class: "gmenu-row",
+        text: item,
+        x_expand: true,
+      }),
+    );
+  }
+
+  clearItems() {
+    this._rows?.remove_all_children();
+  }
+
+  hide() {
+    if (this._grab !== null) {
+      Main.popModal(this._grab);
+      this._grab = null;
+    }
+
+    if (this._root !== null && this._root.get_parent() !== null) {
+      Main.layoutManager.uiGroup.remove_child(this._root);
+    }
+  }
+
+  destroy() {
+    this.hide();
+    this._root?.destroy();
+    this._root = null;
+    this._promptLabel = null;
+    this._entry = null;
+    this._rows = null;
+  }
+
+  _ensureActors() {
+    if (this._root !== null) {
+      return;
+    }
+
+    this._root = new St.BoxLayout({
+      style_class: "gmenu-root",
+      vertical: true,
+      reactive: true,
+      x_expand: true,
+      y_expand: true,
+    });
+
+    const inputRow = new St.BoxLayout({
+      style_class: "gmenu-input-row",
+      vertical: false,
+      x_expand: true,
+    });
+
+    this._promptLabel = new St.Label({
+      style_class: "gmenu-prompt",
+      y_align: Clutter.ActorAlign.CENTER,
+    });
+
+    this._entry = new St.Entry({
+      style_class: "gmenu-input",
+      can_focus: true,
+      x_expand: true,
+    });
+
+    this._rows = new St.BoxLayout({
+      style_class: "gmenu-rows",
+      vertical: true,
+      x_expand: true,
+    });
+
+    inputRow.add_child(this._promptLabel);
+    inputRow.add_child(this._entry);
+    this._root.add_child(inputRow);
+    this._root.add_child(this._rows);
+  }
+
+  _positionRoot() {
+    if (this._root === null) {
+      return;
+    }
+
+    const monitor = Main.layoutManager.primaryMonitor;
+    if (monitor !== null) {
+      this._root.set_position(monitor.x, monitor.y);
+      this._root.set_size(monitor.width, monitor.height);
+    } else {
+      this._root.set_position(0, 0);
+      this._root.set_size(global.stage.width, global.stage.height);
+    }
+  }
+
+  _attachRoot() {
+    if (this._root === null || this._root.get_parent() !== null) {
+      return;
+    }
+
+    Main.layoutManager.uiGroup.add_child(this._root);
+    this._grab = Main.pushModal(this._root);
+  }
+
+  _focusEntry() {
+    if (this._entry === null) {
+      return;
+    }
+
+    global.stage.set_key_focus(this._entry);
+    this._entry.grab_key_focus();
+  }
+}
+
 class GMenuService {
   /** @type {GMenuExtension} */
   _extension;
@@ -142,8 +290,12 @@ export default class GMenuExtension extends Extension {
   /** @type {Session | null} */
   _session = null;
 
+  /** @type {GMenuUI | null} */
+  _ui = null;
+
   enable() {
     this._service = new GMenuService(this);
+    this._ui = new GMenuUI();
     this._service.export();
   }
 
@@ -153,6 +305,8 @@ export default class GMenuExtension extends Extension {
       this._session = null;
     }
 
+    this._ui?.destroy();
+    this._ui = null;
     this._service?.unexport();
     this._service = null;
   }
@@ -168,6 +322,7 @@ export default class GMenuExtension extends Extension {
       items: [],
       keyBindings: new Map(),
     };
+    this._ui?.show(prompt);
   }
 
   /**
@@ -193,6 +348,7 @@ export default class GMenuExtension extends Extension {
     }
 
     session.items.push(item);
+    this._ui?.appendItem(item);
   }
 
   /**

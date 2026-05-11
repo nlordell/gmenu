@@ -2,3 +2,45 @@
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (c) 2026 Nicholas Rodrigues Lordello
  */
+
+.gmenu-root {
+  padding: 24px;
+  background-color: rgba(0, 0, 0, 0.28);
+}
+
+.gmenu-input-row {
+  spacing: 10px;
+  padding: 8px 10px;
+  background-color: #242424;
+  border: 1px solid #4a4a4a;
+}
+
+.gmenu-prompt {
+  min-width: 24px;
+  color: #f4f4f4;
+  font-weight: bold;
+}
+
+.gmenu-input {
+  color: #f4f4f4;
+  caret-color: #ffffff;
+  selection-background-color: #4f7dbd;
+  selected-color: #ffffff;
+}
+
+.gmenu-rows {
+  background-color: #1b1b1b;
+  border-left: 1px solid #4a4a4a;
+  border-right: 1px solid #4a4a4a;
+  border-bottom: 1px solid #4a4a4a;
+}
+
+.gmenu-row {
+  padding: 6px 10px;
+  color: #eeeeee;
+}
+
+.gmenu-row-selected {
+  background-color: #4f7dbd;
+  color: #ffffff;
+}
