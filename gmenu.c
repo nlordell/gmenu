@@ -152,7 +152,7 @@ int main(int argc, char **argv) {
       {"no-custom", no_argument, NULL, 'n'},
       {"kb", required_argument, NULL, 'k'},
       {"help", no_argument, NULL, 'h'},
-      {0, 0, 0, 0},
+      {0},
   };
 
   int opt;
