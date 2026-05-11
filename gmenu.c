@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Nicholas Rodrigues Lordello
 
 #include <getopt.h>
 #include <gio/gio.h>
@@ -36,15 +37,11 @@ static void on_item_selected(GDBusConnection *connection,
 
   State *state = user_data;
   gint32 code;
-  GVariantIter *iter = NULL;
-  g_variant_get(parameters, "(ias)", &code, &iter);
   const gchar *item;
-  while (g_variant_iter_loop(iter, "&s", &item)) {
-    puts(item);
-  }
-  g_variant_iter_free(iter);
+  g_variant_get(parameters, "(i&s)", &code, &item);
+  puts(item);
 
-  state->exit_code = 0x10 + code;
+  state->exit_code = code == 0 ? EXIT_SUCCESS : 9 + code;
   g_main_loop_quit(state->loop);
 }
 
@@ -60,6 +57,25 @@ static void on_cancelled(GDBusConnection *connection, const gchar *sender_name,
   (void)parameters;
 
   State *state = user_data;
+  state->exit_code = EXIT_FAILURE;
+  g_main_loop_quit(state->loop);
+}
+
+static void on_error(GDBusConnection *connection, const gchar *sender_name,
+                     const gchar *object_path, const gchar *interface_name,
+                     const gchar *signal_name, GVariant *parameters,
+                     gpointer user_data) {
+  (void)connection;
+  (void)sender_name;
+  (void)object_path;
+  (void)interface_name;
+  (void)signal_name;
+
+  State *state = user_data;
+  const gchar *message;
+  g_variant_get(parameters, "(&s)", &message);
+  g_printerr("%s\n", message);
+
   state->exit_code = EXIT_FAILURE;
   g_main_loop_quit(state->loop);
 }
@@ -106,7 +122,7 @@ static gboolean parse_keybinding(char *arg, Keybinding *out) {
   *colon = '\0';
   char *end;
   long code = strtol(arg, &end, 10);
-  if (*end != '\0' || code < 0 || code >= 0x10) {
+  if (*end != '\0' || code < 1 || code > 19) {
     return FALSE;
   }
   out->code = (int)code;
@@ -155,7 +171,7 @@ int main(int argc, char **argv) {
       }
       if (!parse_keybinding(optarg, &keybindings[n_keybindings])) {
         fprintf(stderr, "invalid --kb argument (expected 'CODE:BINDING' with "
-                        "0 <= CODE <= 15)\n");
+                        "1 <= CODE <= 19)\n");
         return EXIT_FAILURE;
       }
       n_keybindings++;
@@ -194,6 +210,9 @@ int main(int argc, char **argv) {
   guint sub_cancelled = g_dbus_connection_signal_subscribe(
       bus, NULL, INTERFACE_NAME, "Cancelled", OBJECT_PATH, NULL,
       G_DBUS_SIGNAL_FLAGS_NONE, on_cancelled, &state, NULL);
+  guint sub_error = g_dbus_connection_signal_subscribe(
+      bus, NULL, INTERFACE_NAME, "Error", OBJECT_PATH, NULL,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_error, &state, NULL);
 
   result = g_dbus_connection_call_sync(
       bus, BUS_NAME, OBJECT_PATH, INTERFACE_NAME, "SetPrompt",
@@ -226,6 +245,7 @@ int main(int argc, char **argv) {
 cleanup:
   g_dbus_connection_signal_unsubscribe(bus, sub_selected);
   g_dbus_connection_signal_unsubscribe(bus, sub_cancelled);
+  g_dbus_connection_signal_unsubscribe(bus, sub_error);
   g_main_loop_unref(state.loop);
   g_object_unref(bus);
   g_error_free(error);
