@@ -42,10 +42,16 @@ const DBUS_INTERFACE = `
  * @property {string} prompt
  * @property {boolean} allowCustom
  * @property {string[]} items
+ * @property {string[]} filteredItems
+ * @property {string} query
+ * @property {number} selectedIndex
  * @property {Map<number, string>} keyBindings
  */
 
 class GMenuUI {
+  /** @type {GMenuExtension} */
+  _extension;
+
   /** @type {St.BoxLayout | null} */
   _root = null;
 
@@ -62,6 +68,13 @@ class GMenuUI {
   _grab = null;
 
   /**
+   * @param {GMenuExtension} extension
+   */
+  constructor(extension) {
+    this._extension = extension;
+  }
+
+  /**
    * @param {string} prompt
    */
   show(prompt) {
@@ -76,17 +89,29 @@ class GMenuUI {
   }
 
   /**
-   * @param {string} item
+   * @param {string[]} items
+   * @param {number} selectedIndex
    */
-  appendItem(item) {
+  renderItems(items, selectedIndex) {
     this._ensureActors();
-    this._rows?.add_child(
-      new St.Label({
+
+    if (this._rows === null) {
+      return;
+    }
+
+    this._rows.remove_all_children();
+
+    for (let i = 0; i < items.length; i++) {
+      const row = new St.Label({
         style_class: "gmenu-row",
-        text: item,
+        text: items[i],
         x_expand: true,
-      }),
-    );
+      });
+      if (i === selectedIndex) {
+        row.add_style_class_name("gmenu-row-selected");
+      }
+      this._rows.add_child(row);
+    }
   }
 
   clearItems() {
@@ -142,6 +167,12 @@ class GMenuUI {
       can_focus: true,
       x_expand: true,
     });
+    this._entry.get_clutter_text().connect("text-changed", () => {
+      this._extension.updateQuery(this._entry?.get_text() ?? "");
+    });
+    this._entry.get_clutter_text().connect("key-press-event", (_, event) =>
+      this._extension.handleKeyPress(event),
+    );
 
     this._rows = new St.BoxLayout({
       style_class: "gmenu-rows",
@@ -187,6 +218,76 @@ class GMenuUI {
     global.stage.set_key_focus(this._entry);
     this._entry.grab_key_focus();
   }
+}
+
+/**
+ * @param {string[]} items
+ * @param {string} query
+ * @returns {string[]}
+ */
+function filterItems(items, query) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  if (normalizedQuery.length === 0) {
+    return [...items];
+  }
+
+  /** @type {{ item: string, index: number, score: number }[]} */
+  const scoredItems = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    const score = matchScore(item, normalizedQuery);
+    if (score !== null) {
+      scoredItems.push({ item, index, score });
+    }
+  }
+
+  return scoredItems
+    .sort((a, b) => {
+      if (a.score !== b.score) {
+        return a.score - b.score;
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.item);
+}
+
+/**
+ * @param {string} item
+ * @param {string} normalizedQuery
+ * @returns {number | null}
+ */
+function matchScore(item, normalizedQuery) {
+  const normalizedItem = item.toLocaleLowerCase();
+  if (normalizedItem.startsWith(normalizedQuery)) {
+    return normalizedItem.length;
+  }
+
+  const substringIndex = normalizedItem.indexOf(normalizedQuery);
+  if (substringIndex !== -1) {
+    return 1000 + substringIndex * 10 + normalizedItem.length;
+  }
+
+  let queryIndex = 0;
+  let firstMatch = -1;
+  let lastMatch = -1;
+
+  for (let itemIndex = 0; itemIndex < normalizedItem.length; itemIndex++) {
+    if (normalizedItem[itemIndex] !== normalizedQuery[queryIndex]) {
+      continue;
+    }
+
+    if (firstMatch === -1) {
+      firstMatch = itemIndex;
+    }
+    lastMatch = itemIndex;
+    queryIndex++;
+
+    if (queryIndex === normalizedQuery.length) {
+      return 2000 + (lastMatch - firstMatch) * 10 + firstMatch;
+    }
+  }
+
+  return null;
 }
 
 class GMenuService {
@@ -295,7 +396,7 @@ export default class GMenuExtension extends Extension {
 
   enable() {
     this._service = new GMenuService(this);
-    this._ui = new GMenuUI();
+    this._ui = new GMenuUI(this);
     this._service.export();
   }
 
@@ -320,9 +421,13 @@ export default class GMenuExtension extends Extension {
       prompt,
       allowCustom,
       items: [],
+      filteredItems: [],
+      query: "",
+      selectedIndex: -1,
       keyBindings: new Map(),
     };
     this._ui?.show(prompt);
+    this._renderSession();
   }
 
   /**
@@ -348,7 +453,181 @@ export default class GMenuExtension extends Extension {
     }
 
     session.items.push(item);
-    this._ui?.appendItem(item);
+    this._refilterSession(false);
+    this._renderSession();
+  }
+
+  /**
+   * @param {string} query
+   */
+  updateQuery(query) {
+    const session = this._session;
+    if (session === null) {
+      return;
+    }
+
+    if (session.query === query) {
+      return;
+    }
+
+    session.query = query;
+    this._refilterSession(true);
+    this._renderSession();
+  }
+
+  /**
+   * @param {Clutter.Event} event
+   * @returns {boolean}
+   */
+  handleKeyPress(event) {
+    const symbol = event.get_key_symbol();
+
+    switch (symbol) {
+      case Clutter.KEY_Escape:
+        this._cancelSession();
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Return:
+      case Clutter.KEY_KP_Enter:
+      case Clutter.KEY_ISO_Enter:
+        this._acceptSession(0);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Up:
+        this._moveSelection(-1);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Down:
+        this._moveSelection(1);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Home:
+        this._selectBoundary(0);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_End:
+        this._selectBoundary(-1);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Page_Up:
+        this._moveSelection(-10);
+        return Clutter.EVENT_STOP;
+      case Clutter.KEY_Page_Down:
+        this._moveSelection(10);
+        return Clutter.EVENT_STOP;
+      default:
+        return Clutter.EVENT_PROPAGATE;
+    }
+  }
+
+  /**
+   * @param {number} delta
+   */
+  _moveSelection(delta) {
+    const session = this._session;
+    if (session === null || session.filteredItems.length === 0) {
+      return;
+    }
+
+    session.selectedIndex = Math.max(
+      0,
+      Math.min(session.filteredItems.length - 1, session.selectedIndex + delta),
+    );
+    this._renderSession();
+  }
+
+  /**
+   * @param {number} boundary
+   */
+  _selectBoundary(boundary) {
+    const session = this._session;
+    if (session === null || session.filteredItems.length === 0) {
+      return;
+    }
+
+    session.selectedIndex =
+      boundary === 0 ? 0 : session.filteredItems.length - 1;
+    this._renderSession();
+  }
+
+  /**
+   * @param {number} code
+   */
+  _acceptSession(code) {
+    const session = this._session;
+    if (session === null) {
+      return;
+    }
+
+    const item = this._selectedItem(session);
+    if (item === null) {
+      return;
+    }
+
+    this._session = null;
+    this._ui?.hide();
+    this._service?.emitItemSelected(code, item);
+  }
+
+  _cancelSession() {
+    if (this._session === null) {
+      return;
+    }
+
+    this._session = null;
+    this._ui?.hide();
+    this._service?.emitCancelled();
+  }
+
+  /**
+   * @param {Session} session
+   * @returns {string | null}
+   */
+  _selectedItem(session) {
+    if (
+      session.selectedIndex >= 0 &&
+      session.selectedIndex < session.filteredItems.length
+    ) {
+      return session.filteredItems[session.selectedIndex];
+    }
+
+    if (session.allowCustom) {
+      return session.query;
+    }
+
+    return null;
+  }
+
+  /**
+   * @param {boolean} resetSelection
+   */
+  _refilterSession(resetSelection) {
+    const session = this._session;
+    if (session === null) {
+      return;
+    }
+
+    const selectedItem =
+      session.selectedIndex >= 0
+        ? session.filteredItems[session.selectedIndex]
+        : null;
+    session.filteredItems = filterItems(session.items, session.query);
+
+    if (session.filteredItems.length === 0) {
+      session.selectedIndex = -1;
+    } else if (resetSelection || selectedItem === null) {
+      session.selectedIndex = 0;
+    } else {
+      const nextSelectedIndex = session.filteredItems.indexOf(selectedItem);
+      session.selectedIndex =
+        nextSelectedIndex === -1
+          ? Math.min(session.selectedIndex, session.filteredItems.length - 1)
+          : nextSelectedIndex;
+    }
+  }
+
+  _renderSession() {
+    const session = this._session;
+    if (session === null) {
+      this._ui?.renderItems([], -1);
+      return;
+    }
+
+    this._ui?.renderItems(session.filteredItems, session.selectedIndex);
   }
 
   /**
