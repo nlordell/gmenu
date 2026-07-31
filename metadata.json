@@ -1,7 +1,7 @@
 {
-  "uuid": "gmenu@nlordell.codeberg.org",
+  "uuid": "gmenu@nlordell.github.com",
   "name": "GMenu",
   "description": "A `dmenu`-compatible replacement as a GNOME shell extension",
   "shell-version": ["50"],
-  "url": "https://codeberg.org/nlordell/gmenu"
+  "url": "https://github.com/nlordell/gmenu"
 }
